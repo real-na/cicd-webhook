@@ -1,5 +1,6 @@
 let http = require('http');
 let crypto = require('crypto');
+let { spawn } = require('child_process'); // 开个子进程
 let SECRET = '123456'; // 设置为和github中一致
 function sign(body) {
   // github会把请求的内容用123456当密钥，使用下述同样的方法进行加密
@@ -23,6 +24,28 @@ let server = http.createServer((req, res) => {
       let signature = req.header['x-hub-signature'];
       if (signature !== sign(body)) {
         return res.end('Not Allowed');
+      }
+      // 给github服务器发送一个回应，响应体是json格式
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: true }));
+      // 调用脚本进行自动部署
+      if (event == 'push') {
+        // 拿到push的是哪个仓库
+        let payload = JSON.parse(body);
+        // 为了不阻塞当前进程，开启子进程
+        // 参数1：sh表示shell脚本 参数2：数组里面是仓库的名字
+        // 表示我要执行这个shell脚本，会返回一个子进程
+        let child = spawn('sh', [`./${payload.repository.name}.sh`]);
+        // 监听子进程里面的日志,拿到数据流,每当子进程里面有输出的时候会往外抛，用shBuffers接收
+        let shBuffers = [];
+        child.stdout.on('data', function(shBuffer) {
+          shBuffers.push(shBuffer);
+        });
+        // 拿到结果,合并成一个大的buffer
+        child.stdout.on('end', function(shBuffer) {
+          let log = shBuffer.concat(shBuffers);
+          console.log(log);
+        })
       }
     })
     // 给github服务器发送一个回应，响应体是json格式
