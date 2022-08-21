@@ -1,6 +1,7 @@
 let http = require('http');
 let crypto = require('crypto');
 let { spawn } = require('child_process'); // 开个子进程
+const sendMail = require('./sendMail');
 let SECRET = '123456'; // 设置为和github中一致
 function sign(body) {
   // github会把请求的内容用123456当密钥，使用下述同样的方法进行加密
@@ -18,10 +19,10 @@ let server = http.createServer((req, res) => {
     });
     // 触发end结束事件，回调函数拿到所有的buffer
     req.end('data', (buffer) => {
-      let body = buffer.concat(buffers);
-      let event = req.header['x-github-event']; // push事件的event == push
+      let body = Buffer.concat(buffers);
+      let event = req.headers['x-github-event']; // push事件的event == push
       // 验证签名
-      let signature = req.header['x-hub-signature'];
+      let signature = req.headers['x-hub-signature'];
       if (signature !== sign(body)) {
         return res.end('Not Allowed');
       }
@@ -29,6 +30,8 @@ let server = http.createServer((req, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ ok: true }));
       // 调用脚本进行自动部署
+      // 每当往前/后端的仓库push代码的时候就会进来这个判断
+      // 然后找到对应的脚本sh文件
       if (event == 'push') {
         // 拿到push的是哪个仓库
         let payload = JSON.parse(body);
@@ -43,14 +46,18 @@ let server = http.createServer((req, res) => {
         });
         // 拿到结果,合并成一个大的buffer
         child.stdout.on('end', function(shBuffer) {
-          let log = shBuffer.concat(shBuffers);
+          let log = Buffer.concat(shBuffers).toString();
           console.log(log);
+          sendMail(`
+            <h1>部署日期：${new Date()}</h1>
+            <h2>部署人：${payload.pusher.name}</h2>
+            <h2>部署邮箱：${payload.pusher.email}</h2>
+            <h2>提交日志：${payload.head_commit&&payload.head_commit['message']}</h2>
+            <h2>部署人：${log.replace("\r\n", '<br/>')}</h2>
+          `)
         })
       }
     })
-    // 给github服务器发送一个回应，响应体是json格式
-    res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ ok: true }));
   } else {
     res.end('Not Found1')
   }
